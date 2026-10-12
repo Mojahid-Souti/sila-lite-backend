@@ -246,6 +246,10 @@ def test_produced_files_travel_as_data_not_only_prose() -> None:
     assert kinds.count("agent") >= 2, "the deferred-vetting and loop paths"
 
 
+@pytest.mark.skipif(
+    not Path("../web/components/app/sila/sila-trace.tsx").is_file(),
+    reason="the website is not in this checkout (the backend ships on its own)",
+)
 def test_the_frontend_knows_every_kind_the_backend_emits() -> None:
     """A kind with no icon entry would fall back silently and read as the wrong
     thing, so the two lists must not drift."""
