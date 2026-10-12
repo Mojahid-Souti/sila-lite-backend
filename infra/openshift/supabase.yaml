@@ -1,15 +1,11 @@
-# Supabase core for Lite: Postgres, GoTrue (sign-in) and Kong (the internal
-# gateway the API reaches GoTrue through). None of these get a Route — they
-# are reachable only inside the project.
+# Database and sign-in for Lite: PostgreSQL (with pgvector), GoTrue (sign-in)
+# and Kong (the internal gateway the API reaches GoTrue through). None of
+# these get a Route — they are reachable only inside the project.
 #
-# The supabase/postgres image starts as root and drops to the postgres user
-# itself, so its service account needs the `anyuid` SCC (an admin grants it:
-#   oc adm policy add-scc-to-user anyuid -z sila-db -n <project>).
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: sila-db
----
+# PostgreSQL is the plain pgvector image, which runs as whatever user ID
+# OpenShift assigns — no anyuid or other special permission is needed.
+# infra/postgres/00-sila-init.sh creates the roles and the `auth` schema on
+# the first start; GoTrue and the API's migrations do the rest.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -34,38 +30,22 @@ spec:
     metadata:
       labels: { app: supabase-db }
     spec:
-      serviceAccountName: sila-db
       containers:
         - name: postgres
-          image: docker.io/supabase/postgres:15.8.1.085
+          # PostgreSQL 15 + pgvector, pinned to the exact image tested.
+          image: docker.io/pgvector/pgvector@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9
           ports:
             - containerPort: 5432
           env:
-            - { name: POSTGRES_HOST, value: /var/run/postgresql }
-            - { name: POSTGRES_PORT, value: "5432" }
             - { name: POSTGRES_DB, value: postgres }
+            # The data lives in a sub-folder the database creates (and so owns)
+            # under the volume, which OpenShift makes group-writable.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pg15 }
             - name: POSTGRES_PASSWORD
               valueFrom: { secretKeyRef: { name: sila-secrets, key: POSTGRES_PASSWORD } }
-            - name: JWT_SECRET
-              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_JWT_SECRET } }
-            - name: JWT_EXP
-              valueFrom: { configMapKeyRef: { name: sila-config, key: JWT_EXPIRY } }
           volumeMounts:
-            # A sub-path, so the volume's lost+found never blocks initdb (the
-            # image's config pins the data directory, so PGDATA can't move it).
-            - { name: data, mountPath: /var/lib/postgresql/data, subPath: pgdata }
-            - name: init
-              mountPath: /docker-entrypoint-initdb.d/migrations/99-roles.sql
-              subPath: roles.sql
-            - name: init
-              mountPath: /docker-entrypoint-initdb.d/migrations/99-jwt.sql
-              subPath: jwt.sql
-            - name: init
-              mountPath: /docker-entrypoint-initdb.d/migrations/99-realtime.sql
-              subPath: realtime.sql
-            - name: init
-              mountPath: /docker-entrypoint-initdb.d/migrations/97-webhooks.sql
-              subPath: webhooks.sql
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d }
           readinessProbe:
             exec: { command: ["pg_isready", "-U", "postgres", "-h", "127.0.0.1"] }
             initialDelaySeconds: 15
@@ -81,7 +61,7 @@ spec:
         - name: data
           persistentVolumeClaim: { claimName: supabase-db-data }
         - name: init
-          configMap: { name: supabase-db-init }
+          configMap: { name: sila-db-init, defaultMode: 0755 }
 ---
 apiVersion: v1
 kind: Service

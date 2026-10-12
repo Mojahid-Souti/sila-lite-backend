@@ -21,12 +21,9 @@ images:
     newTag: "1.0.0"
 
 configMapGenerator:
-  - name: supabase-db-init
+  - name: sila-db-init
     files:
-      - infra/supabase/volumes/db/roles.sql
-      - infra/supabase/volumes/db/jwt.sql
-      - infra/supabase/volumes/db/realtime.sql
-      - infra/supabase/volumes/db/webhooks.sql
+      - infra/postgres/00-sila-init.sh
   - name: kong-config
     files:
       - infra/supabase/kong.yml

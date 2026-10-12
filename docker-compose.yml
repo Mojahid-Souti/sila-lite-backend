@@ -17,23 +17,18 @@ x-openshift-user: &openshift-user "1000680000:0"
 
 services:
   supabase-db:
-    image: supabase/postgres:15.8.1.085
+    # PostgreSQL 15 + pgvector — the same image OpenShift runs.
+    image: pgvector/pgvector@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9
     restart: unless-stopped
     environment:
-      POSTGRES_HOST: /var/run/postgresql
-      POSTGRES_PORT: 5432
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      JWT_SECRET: ${SUPABASE_JWT_SECRET}
-      JWT_EXP: ${JWT_EXPIRY:-3600}
+      PGDATA: /var/lib/postgresql/data/pg15
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./infra/supabase/volumes/db/roles.sql:/docker-entrypoint-initdb.d/migrations/99-roles.sql:ro
-      - ./infra/supabase/volumes/db/jwt.sql:/docker-entrypoint-initdb.d/migrations/99-jwt.sql:ro
-      - ./infra/supabase/volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
-      - ./infra/supabase/volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/migrations/97-webhooks.sql:ro
+      - ./infra/postgres/00-sila-init.sh:/docker-entrypoint-initdb.d/00-sila-init.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
       interval: 10s
       timeout: 5s
       retries: 10

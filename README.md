@@ -21,14 +21,16 @@ Both deploy on one hostname: `/` goes to the website and `/v1` to this API.
 | `apps/api` | The API: FastAPI on Python 3.13, with its tests |
 | `infra/opa` | Permission rules (Open Policy Agent) |
 | `infra/policies` | Classification and data-protection policies the API reads |
-| `infra/supabase` | Database start-up scripts and the internal gateway (Kong) config |
+| `infra/postgres` | First-start setup for the database (roles, `auth` schema, extensions) |
+| `infra/supabase` | The internal gateway (Kong) config |
 | `infra/openshift` + `kustomization.yaml` | The OpenShift deployment |
 | `docker-compose.yml` | The same services on one machine |
 | `.github/workflows/ci.yml` | Tests, then builds and publishes the images |
 
-Five services run: **sila-api, opa, Postgres (Supabase), GoTrue (sign-in) and
-Kong** (the internal gateway between the API and GoTrue). Only the API has a
-Route.
+Five services run: **sila-api, opa, PostgreSQL 15 with pgvector, GoTrue
+(sign-in) and Kong** (the internal gateway between the API and GoTrue). Only
+the API has a Route. Every container runs under the user ID OpenShift
+assigns; none needs special permissions such as `anyuid`.
 
 ## Images
 
@@ -67,18 +69,12 @@ Our images run under a random non-root user ID, the way OpenShift runs them.
 - A project (namespace), for example `sila-dev`, with the **admin** role for you.
 - Quota of about **3 vCPU, 6 GiB memory and 20 GiB storage**. Add roughly
   1 vCPU and 1 GiB for the frontend.
-- The `anyuid` SCC for the database's service account. The Supabase Postgres
-  image starts as root and drops to the `postgres` user itself:
-
-  ```bash
-  oc adm policy add-scc-to-user anyuid -z sila-db -n sila-dev
-  ```
-
+- A default StorageClass, so the database's 10 GiB volume can be created.
 - DNS for the public hostname pointing at the cluster's router, and a TLS
   certificate for it. Add the certificate to the Routes, or use the router's
   default if it already covers the hostname.
 - Pulls from `ghcr.io` (the images are public), plus `docker.io` for the
-  Postgres, GoTrue and Kong images.
+  PostgreSQL (pgvector), GoTrue and Kong images.
 
 ### 2. Log in, choose the project, create the secrets
 
@@ -141,8 +137,8 @@ chat message should get the "waiting for GPU servers" reply.
   created. GoTrue cannot be reached directly.
 - **Passwords:** "Forgot password" needs email, so in Lite an administrator
   resets passwords.
-- **Containers** run as non-root with a random UID; only the database needs
-  `anyuid`.
+- **Containers** run as non-root under the UID OpenShift assigns; no
+  container needs `anyuid`.
 
 ## Licence
 
