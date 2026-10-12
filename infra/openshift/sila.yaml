@@ -1,0 +1,155 @@
+# Sila's backend services. The images are built and published by this
+# repository's GitHub Actions workflow to ghcr.io; the version every pod runs
+# is pinned in one place, the `images:` list in kustomization.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  labels: { app: opa }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: opa }
+  template:
+    metadata:
+      labels: { app: opa }
+    spec:
+      containers:
+        - name: opa
+          image: ghcr.io/mojahid-souti/sila-lite-opa
+          args: ["run", "--server", "--addr", "0.0.0.0:8181", "/policies"]
+          ports:
+            - containerPort: 8181
+          readinessProbe:
+            httpGet: { path: /health, port: 8181 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+spec:
+  selector: { app: opa }
+  ports:
+    - { name: http, port: 8181, targetPort: 8181 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sila-api
+  labels: { app: sila-api }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: sila-api }
+  template:
+    metadata:
+      labels: { app: sila-api }
+    spec:
+      containers:
+        - name: sila-api
+          image: ghcr.io/mojahid-souti/sila-lite-api
+          ports:
+            - containerPort: 8001
+          env:
+            - { name: SILA_ENV, value: production }
+            - name: SILA_AI_ENABLED
+              valueFrom: { configMapKeyRef: { name: sila-config, key: SILA_AI_ENABLED } }
+            - name: SILA_SIGNUP_ALLOWED_DOMAINS
+              valueFrom: { configMapKeyRef: { name: sila-config, key: SILA_SIGNUP_ALLOWED_DOMAINS } }
+            - name: SILA_CORS_ORIGINS
+              valueFrom: { configMapKeyRef: { name: sila-config, key: PUBLIC_URL } }
+            - name: SILA_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SILA_SECRET_KEY } }
+            - name: SILA_FIELD_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SILA_FIELD_ENCRYPTION_KEY } }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: DATABASE_URL } }
+            - { name: SILA_SUPABASE_URL, value: "http://supabase-kong:8000" }
+            - name: SILA_SUPABASE_SERVICE_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_SERVICE_ROLE_KEY } }
+            - name: SUPABASE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_JWT_SECRET } }
+            - { name: OPA_URL, value: "http://opa:8181" }
+            # Local models only, once there are GPUs — never a cloud provider.
+            - { name: SILA_LLM_PROVIDER, value: ollama }
+            - { name: SILA_CLASSIFICATION_POLICY_PATH, value: /policies/classification.yaml }
+            - { name: SILA_PDPL_POLICY_PATH, value: /policies/pdpl.yaml }
+          volumeMounts:
+            - { name: policies, mountPath: /policies, readOnly: true }
+            - { name: data, mountPath: /app/data }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: policies
+          configMap: { name: sila-policies }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sila-api
+spec:
+  selector: { app: sila-api }
+  ports:
+    - { name: http, port: 8001, targetPort: 8001 }
+---
+# Creates/upgrades the database tables. Safe to re-run (Alembic skips what is
+# applied). Re-run after an upgrade: oc delete job sila-migrate && oc apply -k .
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sila-migrate
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: ghcr.io/mojahid-souti/sila-lite-api
+          command: ["alembic", "upgrade", "head"]
+          # Only what Alembic needs: the settings model requires these five.
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: DATABASE_URL } }
+            - name: SILA_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SILA_SECRET_KEY } }
+            - { name: SILA_SUPABASE_URL, value: "http://supabase-kong:8000" }
+            - name: SILA_SUPABASE_SERVICE_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_SERVICE_ROLE_KEY } }
+            - name: SUPABASE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_JWT_SECRET } }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: sila-api
+  annotations:
+    # The chat is a long-lived WebSocket; the router's default timeout is 30s.
+    haproxy.router.openshift.io/timeout: 3600s
+spec:
+  host: PUBLIC_HOST
+  path: /v1
+  to: { kind: Service, name: sila-api }
+  port: { targetPort: http }
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

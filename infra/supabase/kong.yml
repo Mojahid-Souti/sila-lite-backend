@@ -1,0 +1,228 @@
+_format_version: "2.1"
+
+###############################################################################
+# SILA / SUPABASE — Kong declarative gateway configuration
+#
+# Routes all Supabase API traffic through Kong.
+# Kong listens on port 8000 (HTTP) and 8443 (HTTPS).
+# ANON_KEY / SERVICE_ROLE_KEY are injected from environment at container start.
+#
+# Phase 1 additions:
+#   - /api/v1/* → sila-api (JWT auth handled by the API itself)
+#   - rate-limiting on /auth/v1/signup (10 rpm) and /auth/v1/token (5 rpm)
+# Phase 3 additions:
+#   - rate-limiting on /api/v1/bazaar/agents (30 rpm search)
+###############################################################################
+
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: ${SUPABASE_ANON_KEY}
+    acls:
+      - group: anon
+  - username: service_role
+    keyauth_credentials:
+      - key: ${SUPABASE_SERVICE_KEY}
+    acls:
+      - group: admin
+
+services:
+  # ---------------------------------------------------------------------------
+  # Sila API — FastAPI backend (Phase 1)
+  # JWT auth is handled by the FastAPI app; no Kong key-auth here.
+  # Route: /api/v1/* → sila-api:8001
+  # ---------------------------------------------------------------------------
+  - name: sila-api-v1
+    url: http://sila-api:8001
+    routes:
+      - name: sila-api-v1-all
+        # strip_path: true removes the matched "/api" prefix before proxying,
+        # so /api/v1/auth/signup → /v1/auth/signup at sila-api:8001.
+        strip_path: true
+        paths:
+          - /api
+    plugins:
+      - name: cors
+
+  # ---------------------------------------------------------------------------
+  # GoTrue Auth — rate-limited signup (10 rpm per IP)
+  # Must be declared before auth-v1-open so the more specific path wins.
+  # ---------------------------------------------------------------------------
+  - name: auth-v1-signup
+    url: http://supabase-auth:9999/signup
+    routes:
+      - name: auth-v1-signup-route
+        strip_path: true
+        paths:
+          - /auth/v1/signup
+    plugins:
+      - name: cors
+      - name: rate-limiting
+        config:
+          minute: 10
+          limit_by: ip
+          policy: local
+          error_code: 429
+          error_message: "Too many signup attempts. Please wait before trying again."
+
+  # ---------------------------------------------------------------------------
+  # GoTrue Auth — rate-limited token/login (5 rpm per IP)
+  # Covers password grant, refresh_token grant, etc.
+  # ---------------------------------------------------------------------------
+  - name: auth-v1-token
+    url: http://supabase-auth:9999/token
+    routes:
+      - name: auth-v1-token-route
+        strip_path: true
+        paths:
+          - /auth/v1/token
+    plugins:
+      - name: cors
+      - name: rate-limiting
+        config:
+          minute: 5
+          limit_by: ip
+          policy: local
+          error_code: 429
+          error_message: "Too many login attempts. Please wait before trying again."
+
+  # ---------------------------------------------------------------------------
+  # GoTrue Auth — open endpoints (no key required)
+  # ---------------------------------------------------------------------------
+  - name: auth-v1-open
+    url: http://supabase-auth:9999/verify
+    routes:
+      - name: auth-v1-open-verify
+        strip_path: true
+        paths:
+          - /auth/v1/verify
+    plugins:
+      - name: cors
+
+  - name: auth-v1-open-callback
+    url: http://supabase-auth:9999/callback
+    routes:
+      - name: auth-v1-open-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+
+  - name: auth-v1-open-authorize
+    url: http://supabase-auth:9999/authorize
+    routes:
+      - name: auth-v1-open-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
+
+  # ---------------------------------------------------------------------------
+  # GoTrue Auth — authenticated endpoints
+  # ---------------------------------------------------------------------------
+  - name: auth-v1
+    url: http://supabase-auth:9999/
+    routes:
+      - name: auth-v1-all
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  # ---------------------------------------------------------------------------
+  # PostgREST — REST API over Postgres
+  # ---------------------------------------------------------------------------
+  - name: rest-v1
+    url: http://supabase-rest:3000/
+    routes:
+      - name: rest-v1-all
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  # ---------------------------------------------------------------------------
+  # Realtime — WebSocket subscriptions
+  # ---------------------------------------------------------------------------
+  - name: realtime-v1
+    url: http://supabase-realtime:4000/socket/
+    routes:
+      - name: realtime-v1-all
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  # ---------------------------------------------------------------------------
+  # Storage API — file uploads and downloads
+  # ---------------------------------------------------------------------------
+  - name: storage-v1
+    url: http://supabase-storage:5000/
+    routes:
+      - name: storage-v1-all
+        strip_path: true
+        paths:
+          - /storage/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  # ---------------------------------------------------------------------------
+  # Postgres Meta — schema introspection (admin only)
+  # ---------------------------------------------------------------------------
+  - name: meta
+    url: http://supabase-meta:8080/
+    routes:
+      - name: meta-all
+        strip_path: true
+        paths:
+          - /pg/
+    plugins:
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin

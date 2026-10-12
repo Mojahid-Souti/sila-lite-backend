@@ -1,0 +1,28 @@
+# =============================================================================
+# Hours-saved rules (Phase 8).
+# Each invocation of an agent is converted into a "minutes saved" estimate
+# using these rules. The Command Center sums daily invocations × minutes/60.
+#
+# Hierarchy (first match wins):
+#   1. by_agent_id: precise per-agent override (rare; used for high-value flagship agents)
+#   2. by_agent_name_pattern: fnmatch-style glob
+#   3. defaults
+#
+# Edits require a Reviewer-signed ADR. Hot-reloaded at app startup.
+# =============================================================================
+
+defaults:
+  per_invocation_minutes: 3
+
+by_agent_name_pattern:
+  - pattern: "customer_support*"
+    per_invocation_minutes: 5
+    note: "Saves a routine customer-support reply (CSAT-tier-1)."
+  - pattern: "voice_*"
+    per_invocation_minutes: 10
+    note: "A voice interaction is roughly a 10-minute phone call avoided."
+  - pattern: "knowledge_*"
+    per_invocation_minutes: 4
+    note: "Document retrieval + summarisation."
+
+by_agent_id: {}

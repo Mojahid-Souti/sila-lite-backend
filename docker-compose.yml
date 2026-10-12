@@ -1,0 +1,161 @@
+# Sila Lite backend — the same five services the OpenShift deployment runs,
+# for a local check. The AI is off (no GPU yet): chat answers with a "waiting
+# for GPU servers" message; everything else works.
+#
+#   python scripts/gen_secrets.py > .env        # once
+#   docker compose pull && docker compose up -d # the published images
+#   docker compose up -d --build                # or build them from this repo
+#   curl http://localhost:8001/healthz
+#
+# Our images run under a random non-root UID in group 0 (`user:` below), the
+# way OpenShift runs them, so a permission problem shows up here first. The
+# website (sila-lite-frontend) talks to this API at http://localhost:8001.
+
+name: sila-lite
+
+x-openshift-user: &openshift-user "1000680000:0"
+
+services:
+  supabase-db:
+    image: supabase/postgres:15.8.1.085
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./infra/supabase/volumes/db/roles.sql:/docker-entrypoint-initdb.d/migrations/99-roles.sql:ro
+      - ./infra/supabase/volumes/db/jwt.sql:/docker-entrypoint-initdb.d/migrations/99-jwt.sql:ro
+      - ./infra/supabase/volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - ./infra/supabase/volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/migrations/97-webhooks.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy: { resources: { limits: { memory: 1g } } }
+
+  supabase-auth:
+    image: supabase/gotrue:v2.186.0
+    restart: unless-stopped
+    user: *openshift-user
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${PUBLIC_URL}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@supabase-db:5432/postgres
+      GOTRUE_SITE_URL: ${PUBLIC_URL}
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      # No email server: an account is active the moment it is created. Who
+      # may create one is limited by SILA_SIGNUP_ALLOWED_DOMAINS in the API,
+      # and GoTrue itself is never reachable from outside.
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_PASSWORD_MIN_LENGTH: 12
+    depends_on:
+      supabase-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:9999/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy: { resources: { limits: { memory: 256m } } }
+
+  supabase-kong:
+    image: kong/kong:3.9.1
+    restart: unless-stopped
+    user: *openshift-user
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        sed "s|\$${SUPABASE_ANON_KEY}|$${SUPABASE_ANON_KEY}|g; s|\$${SUPABASE_SERVICE_KEY}|$${SUPABASE_SERVICE_ROLE_KEY}|g"
+        /etc/kong-template/kong.yml > /tmp/kong.yml && exec /entrypoint.sh kong docker-start
+    environment:
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /tmp/kong.yml
+      KONG_PREFIX: /tmp/kong
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: bundled
+      KONG_NGINX_WORKER_PROCESSES: "2"
+    volumes:
+      - ./infra/supabase/kong.yml:/etc/kong-template/kong.yml:ro
+    depends_on:
+      supabase-auth: { condition: service_healthy }
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  opa:
+    build: { context: ./infra/opa }
+    image: ghcr.io/mojahid-souti/sila-lite-opa:${SILA_TAG:-latest}
+    restart: unless-stopped
+    user: *openshift-user
+    command: ["run", "--server", "--addr", "0.0.0.0:8181", "/policies"]
+    deploy: { resources: { limits: { memory: 128m } } }
+
+  sila-api:
+    build: { context: ./apps/api }
+    image: ghcr.io/mojahid-souti/sila-lite-api:${SILA_TAG:-latest}
+    ports: ["8001:8001"]
+    restart: unless-stopped
+    user: *openshift-user
+    environment:
+      SILA_ENV: production
+      SILA_AI_ENABLED: "false"
+      SILA_SIGNUP_ALLOWED_DOMAINS: ${SILA_SIGNUP_ALLOWED_DOMAINS}
+      SILA_CORS_ORIGINS: ${PUBLIC_URL}
+      SILA_SECRET_KEY: ${SILA_SECRET_KEY}
+      SILA_FIELD_ENCRYPTION_KEY: ${SILA_FIELD_ENCRYPTION_KEY}
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@supabase-db:5432/postgres
+      SILA_SUPABASE_URL: http://supabase-kong:8000
+      SILA_SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      OPA_URL: http://opa:8181
+      SILA_LLM_PROVIDER: ollama
+      SILA_CLASSIFICATION_POLICY_PATH: /policies/classification.yaml
+      SILA_PDPL_POLICY_PATH: /policies/pdpl.yaml
+    volumes:
+      - ./infra/policies:/policies:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      supabase-kong: { condition: service_started }
+      opa: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz',timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy: { resources: { limits: { memory: 1g } } }
+
+  # One-off: create/upgrade the database tables, then exit (OpenShift: a Job).
+  migrate:
+    image: ghcr.io/mojahid-souti/sila-lite-api:${SILA_TAG:-latest}
+    user: *openshift-user
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      SILA_SECRET_KEY: ${SILA_SECRET_KEY}
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@supabase-db:5432/postgres
+      SILA_SUPABASE_URL: http://supabase-kong:8000
+      SILA_SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+    depends_on:
+      supabase-db: { condition: service_healthy }
+      supabase-auth: { condition: service_healthy }
+    restart: "no"
+
+volumes:
+  db-data:

@@ -1,0 +1,15 @@
+# Build-context hygiene. The image builds its OWN virtualenv via `uv sync`, so
+# the host .venv must never enter the context — it's ~500 MB, slows the build to
+# a crawl, and is host-specific (WSL paths/binaries) so COPY-ing it in corrupts
+# the image's venv. Caches and tests aren't needed at runtime either.
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+tests/

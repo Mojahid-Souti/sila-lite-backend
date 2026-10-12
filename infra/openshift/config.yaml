@@ -1,0 +1,18 @@
+# The only file to edit per installation. Everything else reads from here or
+# from the `sila-secrets` Secret (see README → Deploy, step 2).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sila-config
+data:
+  # Public address. The API Route uses PUBLIC_HOST; the API's CORS and
+  # sign-in redirect settings use PUBLIC_URL. Keep the two in step, and the
+  # same as the frontend repository's config.
+  PUBLIC_HOST: sila.omantel.om
+  PUBLIC_URL: https://sila.omantel.om
+  # Who may create an account (comma-separated email domains). Accounts are
+  # active on creation — there is no verification email in Lite.
+  SILA_SIGNUP_ALLOWED_DOMAINS: omantel.om
+  # Off until the GPU servers and the model are installed.
+  SILA_AI_ENABLED: "false"
+  JWT_EXPIRY: "3600"

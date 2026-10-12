@@ -1,0 +1,519 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sila.local/schemas/compute_cost.schema.json",
+  "title": "Sila compute-cost policy",
+  "description": "Inputs for costing local (Ollama) inference. Mirrors what core/policies/analytics_policies.py::get_compute_cost_policy reads. Bound via a `# yaml-language-server: $schema=` modeline at the top of compute_cost.yaml, so the YAML extension does not auto-match the file to an unrelated SchemaStore schema. Keep this in sync with the loader: an unlisted key here means the loader would silently use its default.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hardware", "energy", "electricity", "currency", "cloud_reference"],
+  "properties": {
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capital_usd", "useful_life_hours", "ai_allocation_fraction"],
+      "properties": {
+        "capital_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "useful_life_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "ai_allocation_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "energy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["states", "system_overhead_watts"],
+      "properties": {
+        "states": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cold_idle_watts", "warm_idle_watts", "decode_watts", "prefill_peak_watts"],
+          "properties": {
+            "cold_idle_watts": {
+              "type": "number",
+              "minimum": 0
+            },
+            "warm_idle_watts": {
+              "type": "number",
+              "minimum": 0
+            },
+            "decode_watts": {
+              "type": "number",
+              "minimum": 0
+            },
+            "prefill_peak_watts": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "system_overhead_watts": {
+          "type": "number",
+          "minimum": 0
+        },
+        "power_source_matters": {
+          "description": "True when the GPU's enforced power cap differs by AC/battery enough to change throughput \u2014 benchmarks must then record the power source.",
+          "type": "boolean"
+        },
+        "ac_enforced_cap_watts": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "battery_enforced_cap_watts": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "electricity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["band", "bands"],
+      "properties": {
+        "band": {
+          "description": "Must be a key of `bands`. The loader falls back to the commercial rate on an unknown name, so a typo would silently change the tariff \u2014 this enum catches it in the editor.",
+          "enum": ["primary_residential", "additional_account", "commercial"]
+        },
+        "bands": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary_residential", "additional_account", "commercial"],
+          "properties": {
+            "primary_residential": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "additional_account": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "commercial": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      }
+    },
+    "currency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["omr_per_usd", "report_in"],
+      "properties": {
+        "omr_per_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "report_in": {
+          "description": "Reporting currency for the Command Center.",
+          "enum": ["USD", "OMR"]
+        }
+      }
+    },
+    "cloud_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "usd_per_1m_tokens"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "usd_per_1m_tokens": {
+          "type": "number",
+          "minimum": 0
+        },
+        "usd_per_1m_input_tokens": {
+          "type": "number",
+          "minimum": 0
+        },
+        "usd_per_1m_output_tokens": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "throughput_reference": {
+      "description": "Measured throughput, cited by capacity planning and the architecture appendix.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "decode_tokens_per_second", "measured_on", "measured_date"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decode_tokens_per_second": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "prefill_tokens_per_second": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "prefill_decode_ratio": {
+          "description": "R_p / R_d. Measured 36x on qwen3:14b; the cost appendix previously assumed 10x.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cold_load_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_on": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "native_windows_decode_tokens_per_second": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "native_windows_cold_load_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "quantization": {
+          "type": "string",
+          "minLength": 1
+        },
+        "num_ctx": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "kv_cache_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "power_source": {
+          "enum": ["AC", "battery"]
+        },
+        "superseded_4096_decode_tokens_per_second": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "superseded_4096_prefill_tokens_per_second": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "context_window": {
+      "description": "num_ctx vs throughput/VRAM. The production setting (12288) is past the spill cliff; benchmarks in this file were taken at the Ollama default (4096).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["benchmarks_taken_at", "production_setting", "measured_on", "measured_date"],
+      "properties": {
+        "benchmarks_taken_at": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "production_setting": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "fits_fully_on_gpu_up_to": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "coexists_with_embedder_up_to": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "measured_on": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      }
+    },
+    "agent_path_active_wall": {
+      "description": "Active(GPU):wall measured on the REAL agent path (orchestrator + tools + retrieval) \u2014 what G4 concerns. Governed by whether a tool fires, not by token count.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_pct", "max_pct", "measured_on", "measured_date", "scope"],
+      "properties": {
+        "tool_calling_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "no_tool_short_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "no_tool_long_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "doc_grounded_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "min_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "orchestration_floor_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retrieval_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_on": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "active_wall_ratio": {
+      "description": "Share of wall-clock time the GPU is actually busy, measured across realistic invocation shapes. Scope-limited: single warm LLM calls, excluding orchestration/tool time.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["typical_pct", "min_pct", "max_pct", "measured_on", "measured_date", "scope"],
+      "properties": {
+        "typical_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "min_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "measured_on": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "token_ratio": {
+      "description": "rho = input/(input+output). A-10 assumed 0.80; measured from real invocations because production history has no v2 rows.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assumed_a10",
+        "measured_pooled",
+        "sample_size",
+        "sample_quality",
+        "measured_on",
+        "measured_date"
+      ],
+      "properties": {
+        "assumed_a10": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_pooled": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_plain": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_long_generation": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_document_grounded": {
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_tool_calling": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sample_size": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "sample_quality": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_on": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      }
+    },
+    "concurrency": {
+      "description": "OLLAMA_NUM_PARALLEL, re-tested at the production config. A VRAM ceiling, not a tuning choice.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slots", "reason", "measured_on", "measured_date"],
+      "properties": {
+        "slots": { "type": "integer", "minimum": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "measured_at_num_ctx": { "type": "integer", "exclusiveMinimum": 0 },
+        "measured_kv_cache_type": { "type": "string", "minLength": 1 },
+        "measured_on": { "type": "string", "minLength": 1 },
+        "measured_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+      }
+    },
+    "fixed_costs": {
+      "description": "Per-agent costs that are NOT per-token: embedding, ingestion, vetting, storage. Appendix A prices inference only.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "embedding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ms_per_chunk_batch_32", "seconds_per_1000_chunks"],
+          "properties": {
+            "ms_per_chunk_batch_32": { "type": "number", "exclusiveMinimum": 0 },
+            "ms_per_chunk_unbatched": { "type": "number", "exclusiveMinimum": 0 },
+            "seconds_per_1000_chunks": { "type": "number", "exclusiveMinimum": 0 },
+            "query_embed_ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "ingestion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "corpus_chunks_per_document": { "type": "number", "minimum": 0 },
+            "projected_50_page_embed_seconds": { "type": "number", "minimum": 0 },
+            "status": { "type": "string", "minLength": 1 }
+          }
+        },
+        "vetting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scanner_gpu_seconds"],
+          "properties": {
+            "scanner_gpu_seconds": { "type": "number", "exclusiveMinimum": 0 },
+            "scanner_wall_seconds": { "type": "number", "exclusiveMinimum": 0 },
+            "superseded_scanner_seconds": { "type": "number", "exclusiveMinimum": 0 },
+            "note": { "type": "string", "minLength": 1 }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes_per_chunk", "scales_with"],
+          "properties": {
+            "bytes_per_chunk": { "type": "number", "exclusiveMinimum": 0 },
+            "scales_with": { "type": "string", "minLength": 1 },
+            "measured_chunks": { "type": "integer", "minimum": 0 },
+            "measured_total": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "concierge_prompt_budget": {
+      "description": "OPEN DEFECT: the concierge's fixed prompt exceeds num_ctx, so Ollama truncates every turn. Invalidates rho measured on this surface.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixed_overhead_tokens", "production_num_ctx", "status", "measured_date"],
+      "properties": {
+        "system_prompt_tokens": { "type": "integer", "minimum": 0 },
+        "tool_schema_tokens": { "type": "integer", "minimum": 0 },
+        "fixed_overhead_tokens": { "type": "integer", "minimum": 0 },
+        "production_num_ctx": { "type": "integer", "exclusiveMinimum": 0 },
+        "overflow_tokens": { "type": "integer" },
+        "status": { "type": "string", "minLength": 1 },
+        "measured_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+      }
+    },
+    "platform_overhead": {
+      "description": "Non-inference platform cost (Appendix A excludes it). CPU as fraction of a core.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idle_cores",
+        "idle_memory_gib",
+        "load_cores",
+        "load_scaling_cores",
+        "measured_on",
+        "measured_date"
+      ],
+      "properties": {
+        "idle_cores": {
+          "type": "number",
+          "minimum": 0
+        },
+        "idle_memory_gib": {
+          "type": "number",
+          "minimum": 0
+        },
+        "load_cores": {
+          "type": "number",
+          "minimum": 0
+        },
+        "load_scaling_cores": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dominant_load_component": {
+          "type": "string",
+          "minLength": 1
+        },
+        "containers_counted": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "measured_on": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      }
+    }
+  }
+}

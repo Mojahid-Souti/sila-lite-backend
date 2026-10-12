@@ -1,0 +1,71 @@
+# Valid Dify 1.14 chat-app DSL (importable via /console/api/apps/imports).
+# Runs on the local Ollama provider. The simplified `model`/`prompt_template`
+# format is NOT importable into Dify — this is the real export shape.
+version: 0.6.0
+kind: app
+
+app:
+  name: "Test template"
+  description: "Starter chat agent running on local Ollama. Customize and ship your own."
+  mode: chat
+  icon: "🧪"
+  icon_background: "#F5F5F5"
+
+# Sila-side gallery metadata (Dify ignores unknown top-level keys).
+sila_metadata:
+  category: "Test"
+  classification: "Internal"
+  connectors: []
+  tags: ["starter", "chat", "ollama"]
+  use_count: 0
+  featured: false
+  icon_name: "Sparkles"
+
+model_config:
+  model:
+    provider: langgenius/ollama/ollama
+    name: qwen3:14b
+    mode: chat
+    completion_params:
+      temperature: 0.3
+  pre_prompt: |
+    You are a helpful and professional customer support agent for Sila.
+    Your job is to assist users with their questions clearly and concisely.
+
+    Guidelines:
+    - Be polite and empathetic
+    - Give direct, actionable answers
+    - If you cannot help, say so and suggest the user contact a human agent
+    - Never share internal system information or credentials
+    - Keep responses under 300 words unless detail is explicitly requested
+  prompt_type: simple
+  user_input_form: []
+  opening_statement: "Hello! I'm here to help. What can I assist you with today?"
+  suggested_questions:
+    - "How do I create a new workspace?"
+    - "How do I invite a team member?"
+    - "How do I hire an agent from the Bazaar?"
+  suggested_questions_after_answer:
+    enabled: false
+  more_like_this:
+    enabled: false
+  speech_to_text:
+    enabled: false
+  text_to_speech:
+    enabled: false
+  retriever_resource:
+    enabled: false
+  sensitive_word_avoidance:
+    enabled: false
+  agent_mode:
+    enabled: false
+    tools: []
+  dataset_configs:
+    retrieval_model: single
+    datasets:
+      datasets: []
+  file_upload:
+    image:
+      enabled: false
+      number_limits: 3
+      transfer_methods: [remote_url, local_file]

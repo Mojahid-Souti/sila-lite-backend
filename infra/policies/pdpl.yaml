@@ -1,0 +1,98 @@
+# =============================================================================
+# Oman PDPL + AI-Policy rules enforced by the security agent (Phase 15 / 3B)
+#
+# Sources: Personal Data Protection Law (RD 6/2022) + Executive Regulations
+# (MD 34/2024); Personal Data Protection Policy for State Admin Units (2024);
+# Public Policy for Safe & Ethical Use of AI Systems (2025); Cloud Computing
+# Policy (2021). Article numbers refer to the Executive Regulations unless
+# stated otherwise.
+#
+# Consumed by:
+#   - WorkflowScanner (adapters/scanner/workflow.py) — machine-checkable rules
+#     over n8n workflow definitions (node types, parameters, destinations)
+#   - Compliance findings carry `metadata.pdpl_article` so reviewers and the
+#     compliance report can cite the exact article.
+#
+# Edits require a Reviewer-signed-off ADR (same rule as classification.yaml).
+# Hot-loaded once per process; restart to pick up changes.
+# =============================================================================
+
+articles:
+  consent: "4"            # explicit documented consent required for processing
+  sensitive_data: "5"     # sensitive categories need a Ministry permit
+  child_data: "11-15"     # guardian consent; data minimization for minors
+  marketing: "22"         # written consent + free opt-out for marketing sends
+  security_controls: "26" # systems must prevent unauthorized access/leaks
+  cross_border: "37-40"   # transfers outside Oman: consent + equal protection
+
+# --- Art. 5 sensitive categories (a Ministry permit is required) -------------
+# Substring match (lowercased) over node parameters / prompts.
+sensitive_data_keywords:
+  - health record
+  - medical record
+  - patient data
+  - genetic
+  - biometric
+  - ethnic origin
+  - religious belief
+  - criminal record
+  - sexual life
+  - blood pressure
+  - blood type
+
+# --- Sovereignty: cloud AI / external-processing nodes (Art. 37-38 + Cloud
+# Policy "data stays in Oman"). Substring match (lowercased) on node type.
+# Mirrors the canvas NODES_EXCLUDE list — defence in depth: the palette hides
+# them, the scanner blocks any that arrive via import or API anyway.
+denied_node_type_substrings:
+  - openai
+  - anthropic
+  - gemini
+  - googlevertex
+  - vertexai
+  - azureopenai
+  - cohere
+  - groq
+  - mistralcloud
+  - bedrock
+  - huggingface
+  - perplexity
+  - openrouter
+  - deepseek
+  - xaigrok
+
+# --- Art. 22 external-effect nodes (marketing/social/email sends require
+# consent + opt-out → mandatory human review before publish).
+external_effect_node_type_substrings:
+  - gmail
+  - emailsend
+  - microsoftoutlook
+  - sendgrid
+  - mailgun
+  - mailchimp
+  - twitter
+  - facebook
+  - linkedin
+  - instagram
+  - whatsapp
+  - telegram
+  - slack
+  - discord
+
+# --- Embedded secrets in node parameters (Art. 26 security controls).
+# Python regex, applied to the JSON-serialized parameters of each node.
+secret_patterns:
+  - '(?i)(api[_-]?key|secret|token|password)["'']?\s*[:=]\s*["'']?[A-Za-z0-9_\-]{16,}'
+  - 'sk-[A-Za-z0-9]{24,}'
+  - '(?i)bearer\s+[A-Za-z0-9\-_\.]{24,}'
+
+# --- Hosts considered internal (NOT flagged as cross-border destinations).
+internal_host_substrings:
+  - localhost
+  - 127.0.0.1
+  - sila-
+  - ollama
+  - supabase
+  - dify
+  - n8n
+  - host.docker.internal

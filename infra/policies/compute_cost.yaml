@@ -1,0 +1,497 @@
+# yaml-language-server: $schema=./compute_cost.schema.json
+#
+# Cost of running agents on LOCAL inference (Ollama on the POC rig).
+# Cloud bills per token; local cost = amortized hardware + electricity.
+# Override path with SILA_COMPUTE_COST_POLICY_PATH.
+#
+# The modeline above pins this file to its OWN schema. Without it the YAML
+# extension auto-matches by filename against SchemaStore and applies an
+# unrelated schema (it was reporting a bogus `Missing property "terms"`).
+# It is in-file rather than in .vscode/settings.json because .vscode is
+# gitignored here, so every developer gets the binding.
+#
+# PROVENANCE RULE: every number below is tagged either
+#   [MEASURED <date>, <method>]  — read off the real machine, or
+#   [ASSUMPTION]                 — not measured/sourced; replace before any
+#                                  figure derived from it is presented.
+# Do not "tidy" an ASSUMPTION into an unlabelled number.
+
+hardware:
+  # [ASSUMPTION] Capital cost of the box (or just the GPU) amortized over life.
+  # Not sourced from a purchase record — replace with the actual invoice figure.
+  capital_usd: 3000
+  # [ASSUMPTION] 3 years x 8760 h. Hardware depreciates whether the GPU is busy
+  # or idle — that's why low utilization makes effective cost-per-token high.
+  useful_life_hours: 26280
+  # [ASSUMPTION] Share of the box's amortization charged to AI (1.0 = dedicated).
+  ai_allocation_fraction: 1.0
+
+energy:
+  # ---------------------------------------------------------------------------
+  # Measured power states — RTX 5070 Ti Laptop (12 GB), qwen3:14b resident.
+  # [MEASURED 2026-08-16, nvidia-smi sampling during a single generation]
+  # Superseding the previous single `gpu_power_watts: 250`, which was ~3x the
+  # measured peak and had no stated source.
+  #
+  # NOTE ON THE POWER CAP: the reported cap moves between samples (70/89/96/
+  # 104/108 W) because this laptop shares a dynamic power budget between CPU
+  # and GPU. Treat these as GPU-package draw, not a fixed TDP.
+  # ---------------------------------------------------------------------------
+  # RE-MEASURED ON THE CONTAINER 2026-08-16 (the 4/14/56/82 W figures below were
+  # sampled on the native Windows instance BEFORE cutover and are superseded):
+  #   warm idle (resident, util 0%)  median  9.7 W   range  9.5-19.8   n=93
+  #   decode    (util >= 50%)        median 99.6 W   range 16.6-116.8  n=21
+  # Decode is ~1.8x the previously assumed 56 W; warm idle is LOWER than 14 W.
+  # The enforced power cap moves (105.9/106.5/107.9 W idle) and FALLS under
+  # sustained load (106 -> 96 -> 85 -> 78 W) because the laptop shares a dynamic
+  # power budget between CPU and GPU — so sustained decode is cap-throttled.
+  states:
+    # No model loaded (806 MiB resident). The floor when nothing is warm.
+    cold_idle_watts: 4
+    # Model resident but NOT generating (9,990 MiB). This state is real and
+    # recurring because OLLAMA_KEEP_ALIVE holds weights after each request, so
+    # the cost model charges it for resident-but-idle time.
+    #
+    # RESIDENCY ASSUMPTION CHANGED 2026-08-16: keep-alive moved 5m -> 60m (with
+    # OLLAMA_MAX_LOADED_MODELS=2). At pilot volume the model is now resident
+    # ~10 h/day rather than ~3.9 h/day, so the residency term roughly 2.6x's —
+    # from ~0.0026 to ~0.0065 USD/day. That is still noise in absolute terms,
+    # but it is now the DOMINANT half of the energy line (reload energy fell to
+    # ~0), so the cost model should show residency, not reloads, as the
+    # steady-state energy cost. Charged at the MARGINAL 10 W (14 W warm-idle
+    # minus the 4 W cold-idle floor the GPU draws whenever the machine is on).
+    warm_idle_watts: 9.9 # AC, production config, median n=26 (was 14 native)
+    # Sustained token generation (9,990 MiB). Measured range 52-60 W; we bill
+    # the midpoint. This is the rate applied to decode seconds.
+    decode_watts: 102.0 # AC, production config, median n=26 (was 56 native)
+    # Prefill peak (9,990 MiB) — short, bursty. Applied to prefill seconds.
+    prefill_peak_watts: 122.5 # AC, production config, peak observed (was 82)
+  # [ASSUMPTION — but now CORROBORATED] Rest-of-system (CPU/RAM/fans/display)
+  # draw while serving. Still NOT directly measured: the GPU samples above are
+  # GPU-package only, and a wall-plug meter remains the settling measurement.
+  #
+  # RECONCILIATION (2026-08-16): container-measured decode is 99.6 W GPU. Adding
+  # this 120 W assumption gives 219.6 W whole-system under sustained load. The
+  # APSR electricity workings independently assumed 220 W whole-system for the
+  # same state. Two estimates derived from different directions landing within
+  # 0.2% is not proof, but it means this figure is no longer unsupported — it is
+  # an assumption with independent corroboration. Keep it labelled as such.
+  system_overhead_watts: 120
+
+  # POWER-CAP BEHAVIOUR (why decode power and throughput are not constants):
+  # [MEASURED 2026-08-16] The enforced GPU power limit MOVES, and throughput
+  # tracks it. On AC it sat at ~107 W (samples 105.9/106.5/106.4/107.9) and fell
+  # under sustained decode as the CPU/GPU budget is shared: 106 -> 96 -> 85 -> 78 W.
+  #
+  # ON BATTERY it is clamped far harder: enforced limit 40-50 W, SM clock 307 MHz
+  # against a 3090 MHz maximum, throttle reason 0x4 (SW Power Cap) at only 46-53 C
+  # — so it is a power policy, not thermal. Measured effect on the SAME config
+  # (qwen3:14b, num_ctx 8192, q8_0): 43.9 tok/s on AC vs 22.3 tok/s on battery,
+  # and cold load 22.4 s vs 49.6 s. Roughly HALF throughput on battery.
+  #
+  # => Any throughput or power figure MUST record the power source. Benchmarks
+  #    intended for the cost model must be taken on AC.
+  power_source_matters: true
+  ac_enforced_cap_watts: 107
+  battery_enforced_cap_watts: 45
+
+electricity:
+  # ---------------------------------------------------------------------------
+  # Oman tariff bands, in baisa/kWh (1 OMR = 1000 baisa).
+  # [SOURCED] APSR (Authority for Public Services Regulation) permitted tariffs.
+  # The previous 0.03 USD/kWh was ~11.5 baisa — BELOW every real band.
+  # ---------------------------------------------------------------------------
+  # Which band to bill at. One of the keys under `bands`.
+  # Default = commercial: the platform's costed deployment is an operator site,
+  # not a home. Switch to primary_residential when costing the laptop POC.
+  band: commercial
+  bands:
+    primary_residential: 14 # baisa/kWh
+    additional_account: 22 # baisa/kWh
+    commercial: 25 # baisa/kWh
+
+currency:
+  # [SOURCED] CBO peg: 1 OMR = 2.6008 USD  =>  1 USD = 0.384497 OMR.
+  # Used to convert the baisa tariff into USD and to report either currency.
+  omr_per_usd: 0.384497
+  # Reporting currency for the Command Center: "USD" or "OMR".
+  report_in: USD
+
+cloud_reference:
+  # [ASSUMPTION] What the same token volume would cost on a comparable cloud
+  # model — drives the "savings vs cloud" / sovereignty ROI line. Blended rate;
+  # replace with the specific provider+tier being compared, and split
+  # input/output rates now that we record prompt/eval tokens separately.
+  name: "cloud (GPT-4o-mini class)"
+  usd_per_1m_tokens: 0.60
+  # Separate prefill/decode rates (cloud vendors price these differently).
+  # [ASSUMPTION] Left equal to the blended rate until a provider is chosen.
+  usd_per_1m_input_tokens: 0.60
+  usd_per_1m_output_tokens: 0.60
+
+throughput_reference:
+  # Measured decode/prefill throughput, kept here so capacity planning and the
+  # architecture appendix cite one source rather than folklore.
+  #
+  # [MEASURED 2026-08-16] Controlled A/B — SAME model (qwen2.5:14b-instruct),
+  # SAME Ollama version (0.32.13 both sides, after bumping the container image
+  # from 0.24.0 so the comparison isolates containerisation rather than an
+  # 8-minor version gap), SAME client and prompt (300-token generation,
+  # temperature 0, seed 42), run sequentially with the other instance's weights
+  # unloaded so the two never contended for the 12 GB card.
+  #
+  #   decode, warm (6 samples each):
+  #     native Windows : mean 42.8 tok/s  (range 42.0-44.3)
+  #     container WSL2 : mean 40.9 tok/s  (range 39.5-42.3)   -> ~4.4% slower
+  #   cold model load (9 GB of weights off disk):
+  #     native Windows : 9.25 s
+  #     container WSL2 : 20.6-29.2 s                          -> ~2.2-3.2x slower
+  #
+  # READ: containerisation costs ~4% of decode throughput (small, arguably
+  # within run-to-run variance) but 2-3x on COLD LOAD, which is a real recurring
+  # cost because OLLAMA_KEEP_ALIVE=5m means weights are evicted and reloaded
+  # after idle gaps. Decode dominates steady-state cost; cold load dominates
+  # first-request latency.
+  #
+  # [MEASURED 2026-08-16] The PRODUCTION model, measured directly in the
+  # container after the Option B cutover (median of 6 warm runs; previously the
+  # qwen2.5 container penalty was being carried across to qwen3 by assumption).
+  #   R_d decode  44.38 tok/s  (min 44.07 max 44.62 — very tight)
+  #   R_p prefill 1602  tok/s  (min 1557 max 1693)
+  #   prefill:decode ratio 36x   <- the appendix assumed 10x. Prefill is ~36x
+  #                                 cheaper per token than decode, so DECODE is
+  #                                 where inference cost actually goes.
+  #   cold load   21.13 s
+  #
+  # *** SUPERSEDED / CURRENT ***
+  # The figures below were taken at num_ctx=4096 (Ollama default) ON AC POWER.
+  # The production config is now num_ctx=8192 + q8_0 KV cache. At 8192+q8_0 on
+  # AC the same benchmark gave R_d 43.90 tok/s, R_p 1376 tok/s (ratio 31x),
+  # cold load 22.4 s, with bge-m3 ALSO resident (9,876 MiB, 2,351 MiB headroom).
+  # A battery-power re-run of the identical config gave only 22.3 tok/s — see
+  # `energy.power_source_matters`. The AC 8192+q8_0 set is the one to publish;
+  # the 4096 set is retained as the provenance trail.
+  model: "qwen3:14b"
+  quantization: "Q4_K_M"
+  num_ctx: 8192
+  kv_cache_type: q8_0
+  power_source: AC
+  # FINAL production measurement 2026-08-16, AC mains, Windows Ollama stopped,
+  # GPU held by /llama-server INSIDE the container (verified via nvidia-smi):
+  #   R_d 43.36 tok/s (41.53-43.79, n=6 warm, median)
+  #   R_p 1500 tok/s  (1458-1549, n=6 warm, median)
+  #   cold load 21.26 s | VRAM 9,243 MiB alone, 9,876 MiB with bge-m3
+  decode_tokens_per_second: 43.36
+  prefill_tokens_per_second: 1500
+  prefill_decode_ratio: 35
+  cold_load_seconds: 21.26
+  measured_on: "container-ollama-0.32.13-wsl2"
+  measured_date: "2026-08-16"
+  # Superseded 4096/f16 set (AC): R_d 44.38, R_p 1602, ratio 36x, cold 21.13 s.
+  superseded_4096_decode_tokens_per_second: 44.38
+  superseded_4096_prefill_tokens_per_second: 1602
+  # Superseded reference, kept for the appendix's provenance trail. Native
+  # Windows ran the same model at 45.7-46.3 tok/s, i.e. containerisation costs
+  # ~3.5% of decode throughput on qwen3:14b (it cost ~4.4% on qwen2.5:14b).
+  native_windows_decode_tokens_per_second: 46.0
+  native_windows_cold_load_seconds: 9.25
+
+active_wall_ratio:
+  # [MEASURED 2026-08-16, container, qwen3:14b] Share of WALL-CLOCK time the GPU
+  # is actually busy (prefill+decode), across realistic invocation shapes.
+  #
+  #   short factual (26 in / 20 out)      83%
+  #   RAG answer   (3083 in / 245 out)    98%
+  #   long gen     (40 in / 800 out)      96%
+  #   long gen + reasoning                98%
+  #
+  # IMPORTANT CORRECTION: an earlier note claimed wall clock overstates GPU time
+  # by 13.7x. That figure came from a COLD request, where a 21 s model load
+  # dominated a 9.65 s... i.e. load, not compute. For WARM single LLM calls the
+  # GPU is busy 83-98% of wall, so wall clock is a reasonable proxy there.
+  # The overstatement is real for (a) cold loads and (b) full AGENT invocations,
+  # where wall clock also covers orchestration, retrieval and tool calls — those
+  # are NOT captured by these single /api/generate measurements, so treat these
+  # percentages as the CEILING, not the agent-path figure.
+  typical_pct: 96
+  min_pct: 83
+  max_pct: 98
+  measured_on: "container-ollama-0.32.13-wsl2"
+  measured_date: "2026-08-16"
+  scope: "single /api/generate call, warm; excludes orchestration and tool time"
+
+token_ratio:
+  # rho = input / (input + output). A-10 assumed 0.80 (4 input : 1 output).
+  #
+  # [MEASURED 2026-08-16] Production history carries ZERO v2 rows (no invocation
+  # has run since the telemetry shipped), so this was measured by driving REAL
+  # invocations through the LangGraph agent runtime — same code path, real
+  # prompts, Ollama's own counters. 3 runs per shape, 12 total. SMALL SAMPLE.
+  #
+  #   shape                n   in(med)  out(med)   rho     range
+  #   plain (short)        3     2050        47   0.978   0.978-0.978
+  #   long generation      3     2050       819   0.715   0.697-0.715
+  #   document-grounded    3     2050        67   0.968   0.957-0.968
+  #   tool-calling         3     2050       109   0.950   0.908-0.958
+  #   pooled              12       --        --   0.882   (in 24,600/out 3,300)
+  #
+  # A-10's 0.80 is TOO LOW for every shape except long generation. The driver is
+  # the ~2,050-token SILA system prompt, which dominates input on every turn, so
+  # real workloads are far more input-heavy than assumed. Because prefill is ~35x
+  # cheaper per token than decode, a higher rho makes the workload CHEAPER per
+  # token than the model assumes.
+  #
+  # CAVEAT: the pooled 0.882 is weighted by an equal-reps benchmark mix, NOT a
+  # production workload mix. And 2,050 input is the CONCIERGE prompt — a lean
+  # Dify chat agent would sit much lower. Do not treat 0.882 as universal.
+  assumed_a10: 0.80
+  measured_pooled: 0.882
+  measured_plain: 0.978
+  measured_long_generation: 0.715
+  measured_document_grounded: 0.968
+  measured_tool_calling: 0.950
+  sample_size: 12
+  sample_quality: "small — 3 runs per shape, benchmark mix not production mix"
+  measured_on: "container-ollama-0.32.13-wsl2, langgraph runtime, AC"
+  measured_date: "2026-08-16"
+
+platform_overhead:
+  # Appendix A covers INFERENCE ONLY. This is the fixed + load-scaling platform
+  # cost that must be added before any total goes to finance.
+  # [MEASURED 2026-08-16] docker stats, 34 non-Ollama containers, stack settled
+  # 90 s; CPU expressed as FRACTION OF A CORE (docker's 100% == 1 core).
+  #
+  #   group                                    idle cores   idle MiB
+  #   Langfuse + ClickHouse (observability)       0.075        884
+  #   Nango (connectors)                          0.049        297
+  #   Postgres (Supabase core)                    0.016        108
+  #   Dify (api/worker/web/db/redis/sandbox)      0.014        574
+  #   Supabase rest (kong/gotrue/rest/...)        0.011        622
+  #   security/util (opa/clamav/gotenberg/...)    0.005        278
+  #   Meilisearch                                 0.004         22
+  #   n8n                                         0.003        275
+  #   Sila app (api/worker/web)                   0.002       1023
+  #
+  # UNDER LOAD (one agent invocation in flight) the total moves 0.180 -> 0.615
+  # cores. ClickHouse alone accounts for +0.418 of the +0.435 delta, i.e. ~96% of
+  # the load-scaling CPU is OBSERVABILITY (Langfuse trace ingestion), not agent
+  # work. ClickHouse is also bursty — a single snapshot caught it at 0.50 cores.
+  #
+  # HOW TO USE THIS NUMBER (policy, 2026-08-16):
+  #
+  # 1. On a single-machine deployment, platform overhead is a CAPACITY
+  #    CONSTRAINT, not an additive cost line. The machine draws its idle power
+  #    whether or not the 34 containers are busy; the containers consume cores
+  #    that would otherwise sit unused, and no marginal riyal is spent when they
+  #    do. Adding "platform overhead" as a currency line to the per-token cost
+  #    would double-count the electricity Appendix A already prices. What it
+  #    DOES constrain is headroom: 0.615 of 24 cores under load says the CPU is
+  #    not the bottleneck, the 12 GB of VRAM is. Report it as cores and GiB.
+  #    It becomes a cost line only on a multi-node deployment where the platform
+  #    tier is separately provisioned and separately billed.
+  #
+  # 2. ClickHouse is the SCALING TERM. It is 96% of the load-scaling CPU
+  #    (+0.418 of +0.435 cores per concurrent invocation) and the single largest
+  #    idle memory consumer at 884 MiB. Everything else in the stack is
+  #    effectively flat with respect to agent traffic — Langfuse trace ingestion
+  #    is the only component whose cost grows with invocation volume. Capacity
+  #    planning for more agents should model ClickHouse and ignore the rest;
+  #    equally, trace sampling is the one lever that moves platform cost at all.
+  idle_cores: 0.180
+  idle_memory_gib: 4.0
+  load_cores: 0.615
+  load_scaling_cores: 0.435
+  dominant_load_component: "clickhouse (langfuse traces) — +0.418 of +0.435"
+  containers_counted: 34
+  measured_on: "docker stats, stack settled 90s, AC"
+  measured_date: "2026-08-16"
+
+context_window:
+  # [MEASURED 2026-08-16] *** THE BIGGEST FINDING OF THIS ROUND ***
+  # Decode throughput vs num_ctx for qwen3:14b on the 12 GB card (median of 3,
+  # model unloaded between sizes so each loads cleanly):
+  #     4096 -> 40.4 tok/s   (fits; bge-m3 ALSO fits alongside, 10.2 GB total)
+  #     6144 -> 43.4 tok/s   (fits)
+  #     8192 -> 43.1 tok/s   (fits, but loading bge-m3 then EVICTS qwen3)
+  #    12288 ->  5.4 tok/s   (11 GB, SPILLS 11% to CPU -> 8x collapse)
+  #
+  # settings.sila_llm_num_ctx is 12288 and the production WS path passes it, so
+  # THE PRODUCTION CONFIG IS CURRENTLY PAST THE CLIFF and running spilled at
+  # ~5.4 tok/s while every benchmark in this file was taken at the Ollama
+  # default 4096. Any V_max derived from the 44 tok/s figure describes 4096,
+  # not production.
+  #
+  # DECISION NEEDED (not applied — it is a capability/throughput trade-off):
+  #   4096  both models resident, no eviction, 40 tok/s — best for RAG, but the
+  #         ~2,050-token system prompt plus tool results can crowd the window.
+  #   8192  43 tok/s and room for prompt+tools, but evicts the embedder, so a
+  #         RAG embed->generate cycle pays a ~21 s cold load each way.
+  #  12288  current setting; spilled, 8x slower. Not defensible either way.
+  #
+  # RESOLVED 2026-08-16 with q8_0 KV-cache quantisation (+ flash attention):
+  #   8192 + q8_0  -> 43.90 tok/s, 100% GPU, AND bge-m3 stays resident
+  #                   (9,876 MiB of 12,227; 2,351 MiB headroom)  <- CHOSEN
+  #   12288 + q8_0 -> 15.8 tok/s, still spills, still evicts the embedder
+  #   16384 + q8_0 ->  5.1 tok/s
+  # q8_0 did NOT rescue 12288, but it rescued 8192 to the point where the
+  # trilemma dissolves: the ~4,100-token tool-calling prompt fits, throughput is
+  # full, and the embedder stays loaded so RAG never pays the ~21 s reload.
+  benchmarks_taken_at: 4096
+  production_setting: 8192
+  fits_fully_on_gpu_up_to: 8192
+  coexists_with_embedder_up_to: 8192 # with q8_0; only 4096 with f16
+  measured_on: "container-ollama-0.32.13-wsl2"
+  measured_date: "2026-08-16"
+
+agent_path_active_wall:
+  # [MEASURED 2026-08-16] The REAL agent path — the LangGraph orchestrator driven
+  # end to end, with the LLM gateway wrapped (per-turn Ollama counters) and
+  # execute_tool timed. This is what G4 was actually about; the single-call
+  # figures above are only the ceiling.
+  #
+  #   shape                              turns  in    out  active  tools   orch   wall   act:wall
+  #   plain, short output                  1  2050    41   1.11s  0.00s  2.63s  3.74s     30%
+  #   plain, long output (~800 tok)        1  2050   922  24.74s  0.00s  1.27s 26.01s     95%
+  #   doc-grounded (context in prompt)     1  2050    70   2.93s  0.00s  1.05s  3.97s     74%
+  #   tool-calling (no tool fired)         1  2050    48   1.25s  0.00s  1.33s  2.57s     48%
+  #   tool-calling + reasoning (MCP)       2  4100    56   1.49s 12.69s  2.43s 16.61s      9%
+  #
+  # THE FINDING: the ratio is governed by whether a TOOL FIRES, not by token
+  # count. A single MCP tool call cost 12.7-26.4 s of pure non-GPU wall clock,
+  # collapsing the ratio to 8-10% (observed 4 times). With no tools, the floor is
+  # set by orchestration (checkpointer writes, graph transitions, DB) at a fairly
+  # constant ~1.0-3.0 s per invocation, so short answers land at 27-48% while
+  # long generation approaches the single-call ceiling at 95%.
+  #
+  # => Billing wall clock as GPU time overstates it by ~1.05x (long generation)
+  #    to ~11x (tool-calling). G4 is justified, but the magnitude is workload-
+  #    dependent; quote the band, not one number. A "typical" figure requires a
+  #    workload mix, which the pilot has not yet established.
+  # Re-confirmed on AC at the production config (two passes). The tool-calling
+  # ratio is NOT a constant: it tracks the EXTERNAL service's latency, which
+  # measured 6.5-26 s for the Cloudflare MCP endpoint. Ratio observed 8-31%.
+  tool_calling_pct: 15 # AC warm pass; 8-31% observed across runs
+  no_tool_short_pct: 34 # 27-34% — orchestration floor dominates
+  no_tool_long_pct: 95 # 95-96% AC; decode dominates
+  doc_grounded_pct: 68 # 61-75% observed
+  min_pct: 8
+  max_pct: 96
+  # Warm floor on AC after the MCP discovery fix: 0.89-2.44 s (median ~1.1 s).
+  # Discovery is no longer in it (stale-while-revalidate, 1.47 s -> 0.0 ms).
+  orchestration_floor_seconds: 1.6 # 0.89-2.44 s warm, AC, tool-independent
+  retrieval_seconds: 0.15 # hybrid vector+BM25+RRF, top_k=4; 0.12-0.19 observed
+  measured_on: "container-ollama-0.32.13-wsl2, langgraph orchestrator"
+  measured_date: "2026-08-16"
+  scope: "full agent path incl. orchestration, tool calls and retrieval"
+
+concurrency:
+  # [MEASURED 2026-08-16, AC] OLLAMA_NUM_PARALLEL re-tested AT the production
+  # config (num_ctx 8192 + q8_0 KV + flash attention), because the earlier
+  # decision to keep 1 slot was taken BEFORE q8_0 halved the KV cache. The
+  # question was whether the freed VRAM now admits a second slot.
+  #
+  #   slots  qwen3:14b resident  bge-m3 co-resident  single-stream decode
+  #     1    100% GPU, 9.24 GB   yes (9876 MiB tot)        43.36 tok/s
+  #     2    spilled             NO — evicted               12.12 tok/s
+  #
+  # It does not. A second slot allocates a second KV cache; even at q8_0 that
+  # pushes past 12 GB, which first evicts the embedder (breaking RAG without an
+  # error — the next query silently pays a cold load) and then spills the model
+  # itself to CPU. 12.12 vs 43.36 tok/s is a 3.6x loss on EVERY request to buy
+  # concurrency the pilot's request rate does not need.
+  #
+  # Slots 3 and 4 were NOT tested: 2 already spills, so they are strictly worse.
+  # This is a VRAM ceiling, not a tuning failure — the next headroom comes from
+  # a smaller model or a bigger card, not from another flag.
+  slots: 1
+  reason: "2 slots evict bge-m3 AND spill the LLM: 12.12 vs 43.36 tok/s"
+  measured_at_num_ctx: 8192
+  measured_kv_cache_type: q8_0
+  measured_on: "container-ollama-0.32.13-wsl2, RTX 3090 12 GB, AC"
+  measured_date: "2026-08-16"
+
+fixed_costs:
+  # [MEASURED 2026-08-16, AC, production config] The per-agent costs that are
+  # NOT per-token — what an agent costs to CREATE and KEEP, before anyone talks
+  # to it. Appendix A prices inference only; these are the other terms.
+
+  embedding:
+    # bge-m3, resident on GPU alongside the LLM. ~200-token chunks.
+    #   batch=1  -> 261.3 ms/chunk
+    #   batch=8  ->  49.2 ms/chunk
+    #   batch=32 ->  16.1 ms/chunk
+    # Batching is worth 16x. This is why Rule 6 forbids one-at-a-time embedding
+    # in a loop: the naive version costs 16x the GPU time for identical output.
+    ms_per_chunk_batch_32: 16.1
+    ms_per_chunk_unbatched: 261.3
+    seconds_per_1000_chunks: 15.5
+    # Query time: the embed step of a retrieval, measured separately from the
+    # 0.12-0.19 s search itself. A RAG turn therefore pays ~0.28 s of retrieval
+    # overhead (embed + search) before the LLM produces its first token.
+    query_embed_ms: 133 # 125-170 observed, n=5
+
+  ingestion:
+    # NOT measured end-to-end for a 50-page text document: the pilot corpus does
+    # not contain one. Its 51 documents are image-heavy scans — a 6.8 MB PDF
+    # yields 8 chunks, and the corpus averages 3.4 chunks/document. Reporting a
+    # "50-page" figure from that corpus would be a fabrication.
+    #
+    # PROJECTION from the measured per-chunk rate (label it as such):
+    #   a 50-page text document ~= 25k words ~= 33k tokens ~= 32 chunks
+    #   => ~0.52 s GPU embedding, ~400 KB stored.
+    # The dominant cost is parse/OCR, which is CPU-bound and unmeasured here.
+    corpus_chunks_per_document: 3.4 # image-heavy scans; NOT representative of text
+    projected_50_page_embed_seconds: 0.52 # PROJECTION, not a measurement
+    status: "projection — no text-heavy document in the pilot corpus"
+
+  vetting:
+    # Re-measured at the production config. The 5.74 s figure in the earlier
+    # appendix was taken on qwen2.5:7b at num_ctx 4096 and is SUPERSEDED: the
+    # scanner now runs qwen3:14b at 8192+q8_0 and is FASTER despite the larger
+    # model, because reasoning is off and the KV cache fits.
+    scanner_gpu_seconds: 2.48 # small DSL, 251 in / 84 out
+    scanner_wall_seconds: 2.62
+    superseded_scanner_seconds: 5.74 # qwen2.5:7b @ 4096
+    note: "one scanner pass on a small DSL; a large multi-node DSL will cost more"
+
+  storage:
+    # pgvector, bge-m3 (1024-dim). Measured over the live corpus.
+    bytes_per_chunk: 12456 # incl. text, 1024-dim vector, HNSW index, row overhead
+    # Scales linearly with chunk count, NOT with source bytes: the 51-document
+    # corpus holds 50.7 MB of source but only 2.08 MB of chunks, because scans
+    # carry little extractable text. Source size predicts nothing; chunk count
+    # is the only term that matters.
+    scales_with: "chunk count, not source bytes"
+    measured_chunks: 171
+    measured_total: "2080 kB"
+
+concierge_prompt_budget:
+  # [MEASURED 2026-08-16] A LIVE DEFECT, recorded here because it invalidates
+  # any rho measured from concierge rows.
+  #
+  #   system prompt        3,558 tokens
+  #   38 tool schemas      8,537 tokens
+  #   FIXED per LLM call  12,095 tokens
+  #   production num_ctx   8,192 tokens
+  #   => OVERFLOW          3,903 tokens before the user types anything
+  #
+  # Evidence: a 2-character and a 10,411-character user message both produced
+  # input_tokens=4098. input_tokens tracks num_ctx, not the message:
+  #   num_ctx  4096 + tools -> 2050    16384 + tools -> 12101
+  #   num_ctx  8192 + tools -> 4098     8192 NO tools ->  4997
+  # Ollama truncates silently. The 2,050 figure previously read as "the
+  # concierge system prompt" is a TRUNCATION CEILING, not a prompt size.
+  #
+  # Consequence for costing: rho from these rows measures the context window,
+  # not the workload. token_ratio.measured_* must not be sourced from the
+  # concierge surface until this is fixed.
+  # Consequence for correctness: the model never sees the full tool list or the
+  # full user message. Raising num_ctx is NOT the fix — 12288+ spills to CPU.
+  # The fix is reducing the fixed prompt: the 38 tool schemas are 70% of it.
+  system_prompt_tokens: 3558
+  tool_schema_tokens: 8537
+  fixed_overhead_tokens: 12095
+  production_num_ctx: 8192
+  overflow_tokens: 3903
+  status: "OPEN DEFECT — blocks rho measurement on the concierge surface"
+  measured_date: "2026-08-16"

@@ -1,0 +1,58 @@
+# =============================================================================
+# Agent data classification policy (Phase 6)
+#
+# Maps each classification level to:
+#   - which tool name patterns the agent may use
+#   - which KB scopes it may read from
+#   - whether Reviewer approval is mandatory before Published
+#
+# Tool patterns are matched against `tool.name`. `"*"` means any tool.
+# Reading patterns: glob-style with `*` for prefix or suffix.
+# Deny rules take precedence over allow rules.
+#
+# Edits to this file require a Reviewer-signed-off ADR. Hot-reloaded at app
+# startup; no service restart required for changes to take effect on new vets.
+# =============================================================================
+
+levels:
+  public:
+    description: "Visible in the Bazaar to all workspaces. No PII may appear."
+    require_reviewer: false
+    allowed_tools: ["*"]
+    denied_tools: ["filesystem.*", "postgres.*"]
+    allowed_kb_scopes: ["workspace"]
+
+  internal:
+    description: "Default level. Visible inside the owning workspace only."
+    require_reviewer: false
+    allowed_tools: ["*"]
+    denied_tools: []
+    allowed_kb_scopes: ["workspace", "agent"]
+
+  restricted:
+    description: "Sensitive — Reviewer approval mandatory. Reduced tool surface."
+    require_reviewer: true
+    allowed_tools:
+      - "get_current_time"
+      - "http_fetch.*"
+      - "search.*"
+    denied_tools: ["filesystem.write*", "code_interpreter"]
+    allowed_kb_scopes: ["workspace", "agent"]
+
+  confidential:
+    description: "Highest sensitivity — Reviewer approval mandatory. Minimal tools."
+    require_reviewer: true
+    allowed_tools:
+      - "get_current_time"
+    denied_tools: ["*"]  # any tool not explicitly allowed is denied
+    allowed_kb_scopes: ["agent"]
+
+# Severity → blocking behavior.
+#
+# auto_approve_block_severity: at or above this, the agent cannot
+#   auto-approve and is routed to Reviewer review instead.
+# hard_block_severity: at or above this, **even a Reviewer cannot approve**.
+#   The Builder must fix the underlying issue and re-vet. This protects
+#   PDPL/compliance posture from being signed away by a single reviewer.
+auto_approve_block_severity: "high"
+hard_block_severity: "critical"

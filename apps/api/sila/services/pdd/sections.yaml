@@ -1,0 +1,210 @@
+# PDD Template #2 — the authoritative document spine (spec Part A).
+#
+# Rules encoded here, enforced by the renderer:
+#   - `doc_types` gates a section per document type; numbering NEVER changes —
+#     macro-only subsections (3.8, 4.4) are appended, nothing renumbers.
+#   - `kind`: prose | list | table | image | control (front-matter specials).
+#   - `empty_policy`: open_item → renders "Not discussed — see Open Item #n"
+#     and lands in Section 8; suppress → the heading is omitted entirely.
+#   - table `columns` are the validator's contract: a row missing a required
+#     column is a broken row, not a rendered dash.
+
+front_matter:
+  - id: front.cover
+    title: Cover
+    kind: cover
+  - id: front.control
+    title: Document Control
+    kind: control
+    history_columns: [Version, Author, Comments, Date]
+  - id: front.contributors
+    title: Document Contributors
+    kind: table
+    columns: [Name, Function, Contribution]
+    empty_policy: open_item
+  - id: front.signoff
+    title: Distribution & Sign-off
+    kind: table
+    columns: [Name, Function, I / R / S, Approval, Date]
+    note: "Key: I = information only · R = review required · S = sign-off required."
+    empty_policy: open_item
+  - id: front.toc
+    title: Table of Contents
+    kind: toc
+
+sections:
+  - id: "1"
+    title: Business Overview
+    children:
+      - {id: "1.1", title: Process Definition, kind: prose, empty_policy: open_item}
+      - {id: "1.2", title: Problem Statement, kind: list, empty_policy: open_item}
+      - id: "1.3"
+        title: Objectives & Success Criteria
+        kind: table
+        columns: ["#", Objective, How success is measured]
+        empty_policy: open_item
+      - {id: "1.4", title: Scope Summary, kind: prose, empty_policy: open_item}
+      - {id: "1.4.1", title: In Scope, kind: list, empty_policy: open_item}
+      - {id: "1.4.2", title: Out of Scope, kind: list, empty_policy: open_item}
+      - id: "1.4.3"
+        title: Stakeholders
+        kind: table
+        columns: ["#", "Name (pseudonym)", Role, Team, RACI role, Contact]
+        empty_policy: open_item
+      - id: "1.5"
+        title: Financial KPIs
+        kind: table
+        columns: [Name, Description, Calculation, Baseline, Target, Source]
+        empty_policy: open_item
+      - id: "1.6"
+        title: Operational KPIs
+        kind: table
+        columns: [Name, Description, Calculation, Current value, Target, Source]
+        empty_policy: open_item
+      - id: "1.7"
+        title: Intangible Benefits
+        kind: table
+        columns: ["#", Benefit, Description]
+        empty_policy: suppress
+  - id: "2"
+    title: AS-IS Process
+    children:
+      - {id: "2.1", title: Process Narrative, kind: prose, empty_policy: open_item}
+      - {id: "2.2", title: Process Map (AS-IS), kind: image, source: "2.3", empty_policy: open_item}
+      - id: "2.3"
+        title: Process Steps
+        kind: table
+        columns: ["#", Step name, Actor, System, Inputs, Outputs, Duration, Frequency, Manual/Semi/Auto]
+        required_columns: [Step name, Actor]
+        empty_policy: open_item
+      - id: "2.4"
+        title: Applications Involved
+        kind: table
+        columns: ["#", Application, Version / Environment, Access type, Owner]
+        empty_policy: open_item
+      - id: "2.5"
+        title: Business Volumes
+        kind: table
+        columns: ["#", Operation, Volume, Unit, Frequency, Peak period]
+        empty_policy: open_item
+      - {id: "2.6", title: Pain Points & Known Gaps, kind: list, empty_policy: open_item}
+      - id: "2.7"
+        title: Exceptions & Edge Cases
+        kind: table
+        columns: ["#", Exception, Trigger, Current handling, Frequency]
+        empty_policy: open_item
+  - id: "3"
+    title: TO-BE Process (Proposed)
+    children:
+      - {id: "3.1", title: Solution Overview, kind: prose, empty_policy: open_item}
+      - {id: "3.2", title: Process Map (TO-BE), kind: image, source: "3.3", empty_policy: open_item}
+      - id: "3.3"
+        title: Automated Steps
+        kind: table
+        columns: ["#", Step, BOT/Macro action, System, Input, Output, Decision rules]
+        required_columns: [Step]
+        empty_policy: open_item
+      - id: "3.4"
+        title: Human-in-the-Loop Touchpoints
+        kind: table
+        columns: ["#", Touchpoint, Who, Why human, SLA]
+        empty_policy: suppress
+      - id: "3.5"
+        title: Exception Handling & Escalation
+        kind: table
+        columns: ["#", Exception, Detection, Automated action, Escalates to, SLA]
+        empty_policy: open_item
+      - {id: "3.6", title: Cut-off Date & Schedule, kind: prose, empty_policy: open_item}
+      - {id: "3.7", title: Automation Feasibility, kind: list, empty_policy: open_item}
+      - id: "3.8"
+        title: Macro Technical Build
+        kind: list
+        doc_types: [macro]
+        empty_policy: open_item
+  - id: "4"
+    title: Requirements
+    children:
+      - id: "4.1"
+        title: Functional Requirements
+        kind: table
+        columns: [Process step ref, FR-ID, Description, Business rules, Priority, Mandatory/Optional]
+        empty_policy: open_item
+      - id: "4.2"
+        title: Non-Functional Requirements
+        kind: table
+        columns: [NFR-ID, Type, Description, Acceptance criteria, Mandatory/Optional]
+        empty_policy: open_item
+      - id: "4.3"
+        title: Requirements Traceability (summary)
+        kind: table
+        columns: [FR-ID, "Source (speaker + line)", Confirmed by]
+        empty_policy: open_item
+      - id: "4.4"
+        title: Macro Security & Deployment
+        kind: list
+        doc_types: [macro]
+        empty_policy: open_item
+  - id: "5"
+    title: Risk, Assumptions & Dependencies
+    children:
+      - id: "5.1"
+        title: Assumptions
+        kind: table
+        columns: ["#", Assumption, Impact if false]
+        empty_policy: open_item
+      - id: "5.2"
+        title: Risks
+        kind: table
+        columns: ["#", Risk, Likelihood, Impact, Mitigation, Owner]
+        empty_policy: open_item
+      - id: "5.3"
+        title: Dependencies
+        kind: table
+        columns: ["#", Dependency, Owner, Needed by]
+        empty_policy: suppress
+      - {id: "5.4", title: Compliance & Data Protection, kind: prose, empty_policy: open_item}
+  - id: "6"
+    title: Data Inputs / Outputs
+    children:
+      - id: "6.1"
+        title: Inputs
+        kind: table
+        columns: ["#", Type, Description, Source system, Format, Key/identification, Sensitivity]
+        empty_policy: open_item
+      - id: "6.2"
+        title: Outputs
+        kind: table
+        columns: ["#", Description, Destination, Format, Frequency, Recipients]
+        empty_policy: open_item
+      - {id: "6.3", title: Data Retention & Handling, kind: prose, empty_policy: open_item}
+      - id: "6.4"
+        title: Acronyms & Glossary
+        kind: table
+        columns: [Term, Definition]
+        empty_policy: suppress
+      - {id: "6.5", title: References, kind: list, empty_policy: suppress}
+  - id: "7"
+    title: Roles & Responsibilities (RACI)
+    kind: image
+    source: raci
+    columns_note: "Activity (from 3.3) × Role (from 1.4.3); cells ∈ {R, A, C, I}; exactly one A per activity."
+    empty_policy: open_item
+  - id: "8"
+    title: Open Items & Clarifications
+    kind: table
+    columns: ["#", Section, Question asked, "Status (Open / Answered / Waived)", Owner]
+    empty_policy: suppress
+
+appendices:
+  - {id: "A", title: Stakeholder email template, kind: prose, empty_policy: suppress}
+  - id: "B"
+    title: Requirements traceability matrix
+    kind: table
+    columns: [FR-ID, Speaker, Source line]
+    empty_policy: open_item
+  - {id: "C", title: Confidentiality note, kind: prose, empty_policy: open_item}
+  - id: "D"
+    title: Change log
+    kind: table
+    columns: [Version, Change, Author, Date]
+    empty_policy: suppress

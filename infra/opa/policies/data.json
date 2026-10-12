@@ -1,0 +1,10 @@
+{
+  "roles": ["viewer", "hirer", "reviewer", "builder", "admin"],
+  "role_hierarchy": {
+    "viewer": 0,
+    "hirer": 1,
+    "reviewer": 2,
+    "builder": 3,
+    "admin": 4
+  }
+}

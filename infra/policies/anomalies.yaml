@@ -1,0 +1,40 @@
+# =============================================================================
+# Anomaly detection rules (Phase 8).
+# Statistical thresholds over rolling baselines. Computed when the dashboard
+# is read; persisted as `anomaly_alerts` rows the first time a threshold is
+# crossed in a given window so the alert appears across page reloads.
+#
+# Each rule:
+#   - `metric`: which series to check (matches a key in mv_workspace_daily)
+#   - `kind`: 'zscore' (deviations from baseline mean) | 'absolute' (raw threshold)
+#   - `threshold`: number of stddevs (zscore) OR absolute value
+#   - `baseline_days`: how far back to compute the rolling stats (zscore only)
+#   - `min_sample_size`: don't fire if we have fewer than this many baseline points
+# =============================================================================
+
+rules:
+  - id: invocations_spike
+    metric: invocations
+    kind: zscore
+    threshold: 3.0           # > 3σ above 7-day mean
+    baseline_days: 7
+    min_sample_size: 5
+    severity: medium
+    note: "Invocation spike — possible runaway client or misconfigured loop."
+
+  - id: tool_failure_rate
+    metric: tool_failure_rate
+    kind: absolute
+    threshold: 0.25          # > 25% tool failures in a day
+    min_sample_size: 10      # at least 10 tool calls in the day
+    severity: high
+    note: "Tool failure rate exceeds 25% — likely upstream MCP server outage."
+
+  - id: latency_p95_spike
+    metric: p95_latency_ms
+    kind: zscore
+    threshold: 4.0           # > 4σ — conservative since latency is noisy
+    baseline_days: 7
+    min_sample_size: 5
+    severity: medium
+    note: "p95 invocation latency spike — model degradation or queue contention."

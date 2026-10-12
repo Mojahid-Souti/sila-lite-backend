@@ -1,0 +1,51 @@
+# Sila Lite backend on OpenShift:  oc apply -k .
+# (Create the `sila-secrets` Secret first — see README.)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: sila-lite
+
+resources:
+  - infra/openshift/config.yaml
+  - infra/openshift/supabase.yaml
+  - infra/openshift/sila.yaml
+
+# The version every backend pod runs. Images are published by this
+# repository's GitHub Actions workflow (tag vX.Y.Z → image tag X.Y.Z).
+images:
+  - name: ghcr.io/mojahid-souti/sila-lite-api
+    newTag: "1.0.0"
+  - name: ghcr.io/mojahid-souti/sila-lite-opa
+    newTag: "1.0.0"
+
+configMapGenerator:
+  - name: supabase-db-init
+    files:
+      - infra/supabase/volumes/db/roles.sql
+      - infra/supabase/volumes/db/jwt.sql
+      - infra/supabase/volumes/db/realtime.sql
+      - infra/supabase/volumes/db/webhooks.sql
+  - name: kong-config
+    files:
+      - infra/supabase/kong.yml
+  - name: sila-policies
+    files:
+      - infra/policies/anomalies.yaml
+      - infra/policies/classification.yaml
+      - infra/policies/compute_cost.schema.json
+      - infra/policies/compute_cost.yaml
+      - infra/policies/hours_saved.yaml
+      - infra/policies/pdpl.yaml
+
+# The API Route's host comes from sila-config, so config.yaml is the only file
+# to edit.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: sila-config
+      fieldPath: data.PUBLIC_HOST
+    targets:
+      - select: { kind: Route }
+        fieldPaths: [spec.host]

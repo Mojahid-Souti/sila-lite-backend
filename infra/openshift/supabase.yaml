@@ -1,0 +1,210 @@
+# Supabase core for Lite: Postgres, GoTrue (sign-in) and Kong (the internal
+# gateway the API reaches GoTrue through). None of these get a Route — they
+# are reachable only inside the project.
+#
+# The supabase/postgres image starts as root and drops to the postgres user
+# itself, so its service account needs the `anyuid` SCC (an admin grants it:
+#   oc adm policy add-scc-to-user anyuid -z sila-db -n <project>).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sila-db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: supabase-db-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supabase-db
+  labels: { app: supabase-db }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }  # one writer on the volume, never two
+  selector:
+    matchLabels: { app: supabase-db }
+  template:
+    metadata:
+      labels: { app: supabase-db }
+    spec:
+      serviceAccountName: sila-db
+      containers:
+        - name: postgres
+          image: docker.io/supabase/postgres:15.8.1.085
+          ports:
+            - containerPort: 5432
+          env:
+            - { name: POSTGRES_HOST, value: /var/run/postgresql }
+            - { name: POSTGRES_PORT, value: "5432" }
+            - { name: POSTGRES_DB, value: postgres }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: POSTGRES_PASSWORD } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_JWT_SECRET } }
+            - name: JWT_EXP
+              valueFrom: { configMapKeyRef: { name: sila-config, key: JWT_EXPIRY } }
+          volumeMounts:
+            # A sub-path, so the volume's lost+found never blocks initdb (the
+            # image's config pins the data directory, so PGDATA can't move it).
+            - { name: data, mountPath: /var/lib/postgresql/data, subPath: pgdata }
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/migrations/99-roles.sql
+              subPath: roles.sql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/migrations/99-jwt.sql
+              subPath: jwt.sql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/migrations/99-realtime.sql
+              subPath: realtime.sql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/migrations/97-webhooks.sql
+              subPath: webhooks.sql
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-h", "127.0.0.1"] }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-h", "127.0.0.1"] }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: supabase-db-data }
+        - name: init
+          configMap: { name: supabase-db-init }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supabase-db
+spec:
+  selector: { app: supabase-db }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supabase-auth
+  labels: { app: supabase-auth }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: supabase-auth }
+  template:
+    metadata:
+      labels: { app: supabase-auth }
+    spec:
+      containers:
+        - name: gotrue
+          image: docker.io/supabase/gotrue:v2.186.0
+          ports:
+            - containerPort: 9999
+          env:
+            - { name: GOTRUE_API_HOST, value: 0.0.0.0 }
+            - { name: GOTRUE_API_PORT, value: "9999" }
+            - { name: GOTRUE_DB_DRIVER, value: postgres }
+            - name: GOTRUE_DB_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: GOTRUE_DB_DATABASE_URL } }
+            - name: API_EXTERNAL_URL
+              valueFrom: { configMapKeyRef: { name: sila-config, key: PUBLIC_URL } }
+            - name: GOTRUE_SITE_URL
+              valueFrom: { configMapKeyRef: { name: sila-config, key: PUBLIC_URL } }
+            - { name: GOTRUE_DISABLE_SIGNUP, value: "false" }
+            - { name: GOTRUE_JWT_ADMIN_ROLES, value: service_role }
+            - { name: GOTRUE_JWT_AUD, value: authenticated }
+            - { name: GOTRUE_JWT_DEFAULT_GROUP_NAME, value: authenticated }
+            - name: GOTRUE_JWT_EXP
+              valueFrom: { configMapKeyRef: { name: sila-config, key: JWT_EXPIRY } }
+            - name: GOTRUE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_JWT_SECRET } }
+            - { name: GOTRUE_EXTERNAL_EMAIL_ENABLED, value: "true" }
+            # No email server: accounts are active on creation. Who may sign
+            # up is limited by the API (SILA_SIGNUP_ALLOWED_DOMAINS), and
+            # GoTrue itself has no Route.
+            - { name: GOTRUE_MAILER_AUTOCONFIRM, value: "true" }
+            - { name: GOTRUE_PASSWORD_MIN_LENGTH, value: "12" }
+          readinessProbe:
+            httpGet: { path: /health, port: 9999 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supabase-auth
+spec:
+  selector: { app: supabase-auth }
+  ports:
+    - { name: http, port: 9999, targetPort: 9999 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supabase-kong
+  labels: { app: supabase-kong }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: supabase-kong }
+  template:
+    metadata:
+      labels: { app: supabase-kong }
+    spec:
+      containers:
+        - name: kong
+          image: docker.io/kong/kong:3.9.1
+          # Fill the two API keys into the declarative config, then start Kong.
+          command:
+            - sh
+            - -c
+            - >-
+              sed "s|\${SUPABASE_ANON_KEY}|${SUPABASE_ANON_KEY}|g; s|\${SUPABASE_SERVICE_KEY}|${SUPABASE_SERVICE_ROLE_KEY}|g"
+              /etc/kong-template/kong.yml > /tmp/kong.yml && exec /entrypoint.sh kong docker-start
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SUPABASE_ANON_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_ANON_KEY } }
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom: { secretKeyRef: { name: sila-secrets, key: SUPABASE_SERVICE_ROLE_KEY } }
+            - { name: KONG_DATABASE, value: "off" }
+            - { name: KONG_DECLARATIVE_CONFIG, value: /tmp/kong.yml }
+            - { name: KONG_PREFIX, value: /tmp/kong }
+            - { name: KONG_DNS_ORDER, value: "LAST,A,CNAME" }
+            - { name: KONG_PLUGINS, value: bundled }
+            - { name: KONG_NGINX_WORKER_PROCESSES, value: "2" }
+          volumeMounts:
+            - { name: template, mountPath: /etc/kong-template }
+          readinessProbe:
+            tcpSocket: { port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: template
+          configMap: { name: kong-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supabase-kong
+spec:
+  selector: { app: supabase-kong }
+  ports:
+    - { name: http, port: 8000, targetPort: 8000 }
